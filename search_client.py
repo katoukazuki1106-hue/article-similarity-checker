@@ -165,8 +165,30 @@ class GoogleSearchClient(BaseSearchClient):
             )
 
     def search(self, query: str) -> List[SearchResult]:
-        # TODO: googleapiclient.discovery を使った実装
-        raise NotImplementedError("Google Custom Search API の実装は将来対応予定です。")
+        import requests
+        url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            "key": self.api_key,
+            "cx": self.engine_id,
+            "q": query,
+            "num": 3,
+        }
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as e:
+            print(f"[警告] Google検索API呼び出し失敗: {e}")
+            return []
+
+        results = []
+        for item in data.get("items", []):
+            results.append(SearchResult(
+                title=item.get("title", ""),
+                url=item.get("link", ""),
+                snippet=item.get("snippet", ""),
+            ))
+        return results
 
 
 # ---------------------------------------------------------------------------

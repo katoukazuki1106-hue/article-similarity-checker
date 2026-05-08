@@ -198,6 +198,39 @@ class GoogleSearchClient(BaseSearchClient):
 
 
 # ---------------------------------------------------------------------------
+# DuckDuckGo検索（APIキー不要・Web全体検索）
+# ---------------------------------------------------------------------------
+
+class DuckDuckGoSearchClient(BaseSearchClient):
+    """
+    DuckDuckGo検索クライアント。APIキー不要でWeb全体を検索できる。
+    """
+
+    def search(self, query: str) -> List[SearchResult]:
+        from page_fetcher import fetch_page_text
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            return []
+
+        results = []
+        try:
+            with DDGS() as ddgs:
+                for r in ddgs.text(query, max_results=3):
+                    url = r.get("href", "")
+                    snippet = r.get("body", "")
+                    full_text = fetch_page_text(url)
+                    results.append(SearchResult(
+                        title=r.get("title", ""),
+                        url=url,
+                        snippet=full_text if full_text else snippet,
+                    ))
+        except Exception as e:
+            print(f"[警告] DuckDuckGo検索失敗: {e}")
+        return results
+
+
+# ---------------------------------------------------------------------------
 # 将来実装：Bing Web Search API
 # ---------------------------------------------------------------------------
 
@@ -249,12 +282,5 @@ def get_search_client(use_mock: bool = True) -> BaseSearchClient:
     if use_mock:
         return MockSearchClient()
 
-    if os.getenv("GOOGLE_API_KEY"):
-        return GoogleSearchClient()
-    elif os.getenv("BING_SEARCH_API_KEY"):
-        return BingSearchClient()
-    elif os.getenv("SERPAPI_KEY"):
-        return SerpApiClient()
-    else:
-        print("[警告] APIキーが設定されていないため、モックモードで動作します。")
-        return MockSearchClient()
+    # APIキー不要のDuckDuckGoをデフォルトに使用
+    return DuckDuckGoSearchClient()

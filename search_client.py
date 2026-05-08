@@ -166,7 +166,9 @@ class GoogleSearchClient(BaseSearchClient):
 
     def search(self, query: str) -> List[SearchResult]:
         import requests
-        url = "https://www.googleapis.com/customsearch/v1"
+        from page_fetcher import fetch_page_text
+
+        api_url = "https://www.googleapis.com/customsearch/v1"
         params = {
             "key": self.api_key,
             "cx": self.engine_id,
@@ -174,7 +176,7 @@ class GoogleSearchClient(BaseSearchClient):
             "num": 3,
         }
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(api_url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
@@ -183,10 +185,14 @@ class GoogleSearchClient(BaseSearchClient):
 
         results = []
         for item in data.get("items", []):
+            link = item.get("link", "")
+            snippet = item.get("snippet", "")
+            # ページ全文を取得してスニペットの代わりに使用（失敗時はスニペットで代替）
+            full_text = fetch_page_text(link)
             results.append(SearchResult(
                 title=item.get("title", ""),
-                url=item.get("link", ""),
-                snippet=item.get("snippet", ""),
+                url=link,
+                snippet=full_text if full_text else snippet,
             ))
         return results
 

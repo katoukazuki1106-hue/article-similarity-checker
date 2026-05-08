@@ -122,14 +122,37 @@ def _run_check(uploaded_file, threshold: float, use_mock: bool):
         checker = SimilarityChecker()
 
         matches = []
+        debug_rows = []
         progress = st.progress(0, text="検索中...")
         for i, (fragment, query) in enumerate(zip(fragments, queries)):
             results = search_client.search(query)
             match = checker.check_phrase(fragment.text, results)
+            # デバッグ用：最初の5件の詳細を記録
+            if i < 5:
+                top_url = results[0].url if results else "（結果なし）"
+                from rapidfuzz import fuzz
+                top_score = max(
+                    (fuzz.partial_ratio(fragment.text, r.snippet) for r in results),
+                    default=0
+                ) if results else 0
+                debug_rows.append({
+                    "クエリ": query,
+                    "取得件数": len(results),
+                    "上位URL": top_url,
+                    "最高類似度": f"{top_score}%",
+                })
             if match and match.similarity >= threshold:
                 matches.append(match)
             progress.progress((i + 1) / len(queries), text=f"検索中... {i+1}/{len(queries)}")
         progress.empty()
+
+    # デバッグ情報を表示
+    with st.expander("🔍 デバッグ情報（最初の5クエリ）", expanded=not matches):
+        if debug_rows:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
+        else:
+            st.write("データなし")
 
     scorer = RiskScorer()
     risk_summary = scorer.calculate(matches, len(fragments))

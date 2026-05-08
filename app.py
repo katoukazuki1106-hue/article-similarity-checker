@@ -84,7 +84,7 @@ def main():
         return
 
     # ---- チェック実行ボタン ----
-    if st.button("🔍 チェック開始", type="primary", use_container_width=True):
+    if st.button("🔍 チェック開始", type="primary"):
         _run_check(uploaded_file, threshold, use_mock)
 
 
@@ -150,7 +150,7 @@ def _run_check(uploaded_file, threshold: float, use_mock: bool):
     with st.expander("🔍 デバッグ情報（最初の5クエリ）", expanded=not matches):
         if debug_rows:
             import pandas as pd
-            st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
+            st.dataframe(pd.DataFrame(debug_rows), width="stretch")
         else:
             st.write("データなし")
 

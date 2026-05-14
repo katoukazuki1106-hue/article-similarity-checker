@@ -69,7 +69,7 @@ def main():
         )
         use_mock = st.toggle("モック検索を使用", value=True, help="ONのままでAPIキー不要で動作します")
         st.divider()
-        st.caption("🔗 将来的にGoogle/Bing/SerpAPIに接続すると実際のWeb検索と照合できます。")
+        st.caption("🔗 モックをオフにするとBrave Search APIで実際のWeb全体と照合できます。")
 
     # ---- ファイルアップロード ----
     uploaded_file = st.file_uploader(

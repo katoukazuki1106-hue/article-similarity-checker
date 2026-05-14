@@ -231,6 +231,61 @@ class DuckDuckGoSearchClient(BaseSearchClient):
 
 
 # ---------------------------------------------------------------------------
+# Brave Search API
+# ---------------------------------------------------------------------------
+
+class BraveSearchClient(BaseSearchClient):
+    """
+    Brave Search API を使った検索クライアント。
+    .env に BRAVE_SEARCH_API_KEY を設定して使用する。
+    """
+
+    def __init__(self):
+        self.api_key = os.getenv("BRAVE_SEARCH_API_KEY")
+        if not self.api_key:
+            raise ValueError("[エラー] .env に BRAVE_SEARCH_API_KEY を設定してください。")
+
+    def search(self, query: str) -> List[SearchResult]:
+        import requests
+        from page_fetcher import fetch_page_text
+
+        headers = {
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": self.api_key,
+        }
+        params = {
+            "q": query,
+            "count": 3,
+            "text_decorations": False,
+        }
+        try:
+            response = requests.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                headers=headers,
+                params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            print(f"[警告] Brave検索API呼び出し失敗: {e}")
+            return []
+
+        results = []
+        for item in data.get("web", {}).get("results", []):
+            url = item.get("url", "")
+            snippet = item.get("description", "")
+            full_text = fetch_page_text(url)
+            results.append(SearchResult(
+                title=item.get("title", ""),
+                url=url,
+                snippet=full_text if full_text else snippet,
+            ))
+        return results
+
+
+# ---------------------------------------------------------------------------
 # 将来実装：Bing Web Search API
 # ---------------------------------------------------------------------------
 
@@ -277,10 +332,9 @@ class SerpApiClient(BaseSearchClient):
 def get_search_client(use_mock: bool = True) -> BaseSearchClient:
     """
     use_mock=True  → MockSearchClient（デフォルト・APIキー不要）
-    use_mock=False → 環境変数に応じて実APIクライアントを返す
+    use_mock=False → BraveSearchClient（BRAVE_SEARCH_API_KEY が必要）
     """
     if use_mock:
         return MockSearchClient()
 
-    # APIキー不要のDuckDuckGoをデフォルトに使用
-    return DuckDuckGoSearchClient()
+    return BraveSearchClient()

@@ -159,6 +159,7 @@ def _run_check(uploaded_file, threshold: float, use_mock: bool):
 
     # ---- 結果表示 ----
     _show_summary(risk_summary, uploaded_file.name, len(article_text), len(queries))
+    _show_url_summaries(risk_summary.url_summaries)
     _show_matches(matches)
     _show_csv_download(matches, uploaded_file.name)
 
@@ -185,6 +186,25 @@ def _show_summary(rs, filename: str, char_count: int, query_count: int):
     c4.metric("類似検出", rs.matched_count)
     c5.metric("危険", rs.danger_count, delta=None)
     c6.metric("要確認", rs.warning_count, delta=None)
+
+
+def _show_url_summaries(url_summaries):
+    """URL別一致サマリーを表示する。"""
+    if not url_summaries:
+        return
+
+    st.divider()
+    st.subheader("🔗 類似元URL別サマリー")
+    st.caption("同一URLから複数フレーズが一致している場合、コピー元の可能性が高くなります。")
+
+    for us in url_summaries:
+        color = RISK_COLORS.get(us.risk_level, "#4caf50")
+        badge = f"<span style='background:{color};color:white;padding:2px 8px;border-radius:10px;font-size:0.85em;'>{us.risk_level}</span>"
+        st.markdown(
+            f"{badge} &nbsp; **{us.match_count}フレーズ一致** &nbsp; 最高類似度:{us.max_similarity:.0f}% &nbsp; "
+            f"[{us.title or us.url}]({us.url})",
+            unsafe_allow_html=True,
+        )
 
 
 def _show_matches(matches):

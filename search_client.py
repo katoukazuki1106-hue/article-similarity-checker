@@ -247,7 +247,6 @@ class BraveSearchClient(BaseSearchClient):
 
     def search(self, query: str) -> List[SearchResult]:
         import requests
-        from page_fetcher import fetch_page_text
 
         headers = {
             "Accept": "application/json",
@@ -256,7 +255,7 @@ class BraveSearchClient(BaseSearchClient):
         }
         params = {
             "q": query,
-            "count": 3,
+            "count": 5,
             "text_decorations": False,
         }
         try:
@@ -274,13 +273,11 @@ class BraveSearchClient(BaseSearchClient):
 
         results = []
         for item in data.get("web", {}).get("results", []):
-            url = item.get("url", "")
-            snippet = item.get("description", "")
-            full_text = fetch_page_text(url)
+            # ページ全文取得はノイズが多いためBraveスニペットをそのまま使用
             results.append(SearchResult(
                 title=item.get("title", ""),
-                url=url,
-                snippet=full_text if full_text else snippet,
+                url=item.get("url", ""),
+                snippet=item.get("description", ""),
             ))
         return results
 

@@ -14,21 +14,15 @@ class QueryBuilder:
 
     def build_queries(self, fragments: List[TextFragment]) -> List[str]:
         """
-        フレーズリストからユニークな検索クエリを生成する。
+        フレーズリストから検索クエリを生成する。
+        フレーズと1対1で対応するようにソートせず元の順序を維持する。
         上限は MAX_SEARCH_QUERIES。
         """
         queries: List[str] = []
-        seen: set = set()
 
-        # 特徴的なフレーズを優先するためスコア付きでソート
-        ranked = self._rank_fragments(fragments)
-
-        for fragment in ranked:
+        for fragment in fragments:
             query = self._clean_for_search(fragment.text)
-            if not query or query in seen:
-                continue
-            queries.append(query)
-            seen.add(query)
+            queries.append(query if query else "")
             if len(queries) >= MAX_SEARCH_QUERIES:
                 break
 

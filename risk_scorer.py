@@ -3,11 +3,22 @@ risk_scorer.py
 記事全体の危険度をスコア化し、最終判定を出す。
 """
 
-from dataclasses import dataclass
-from typing import List
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import Dict, List
 
 from config import OVERALL_DANGER_RATE, OVERALL_WARNING_RATE
 from similarity_checker import SimilarityMatch
+
+
+@dataclass
+class UrlMatchSummary:
+    """同一URLからの一致集計"""
+    url: str
+    title: str
+    match_count: int        # 一致フレーズ数
+    max_similarity: float   # 最高類似度
+    risk_level: str         # 最も高いリスクレベル
 
 
 @dataclass
@@ -22,6 +33,7 @@ class RiskSummary:
     warning_count: int          # 「要確認」判定フレーズ数
     match_rate: float           # 類似フレーズ率（%）
     summary_reason: str         # 最終判定の理由
+    url_summaries: List[UrlMatchSummary] = field(default_factory=list)  # URL別集計
 
 
 # リスクレベルごとの加算ポイント
@@ -73,9 +85,17 @@ class RiskScorer:
         elif match_rate >= OVERALL_WARNING_RATE:
             score = max(score, 50.0)
 
+        # URL別集計（同一URLから3件以上一致でスコア加算）
+        url_summaries = self._build_url_summaries(matches)
+        for us in url_summaries:
+            if us.match_count >= 3:
+                score = min(100.0, score + 20.0)
+            elif us.match_count >= 2:
+                score = min(100.0, score + 10.0)
+
         final_risk = self._score_to_risk(score)
         reason = self._build_reason(
-            score, danger_count, warning_count, high_risk_count, match_rate
+            score, danger_count, warning_count, high_risk_count, match_rate, url_summaries
         )
 
         return RiskSummary(
@@ -88,6 +108,7 @@ class RiskScorer:
             warning_count=warning_count,
             match_rate=round(match_rate, 1),
             summary_reason=reason,
+            url_summaries=url_summaries,
         )
 
     def _score_to_risk(self, score: float) -> str:
@@ -101,6 +122,32 @@ class RiskScorer:
         else:
             return "危険"
 
+    def _build_url_summaries(self, matches: List[SimilarityMatch]) -> List[UrlMatchSummary]:
+        """URL別の一致集計を生成する。一致数の多い順で返す。"""
+        url_data: Dict[str, dict] = {}
+        risk_order = {"危険": 3, "要確認": 2, "高リスク": 1, "問題なし": 0}
+
+        for m in matches:
+            if m.url not in url_data:
+                url_data[m.url] = {
+                    "title": m.title,
+                    "count": 0,
+                    "max_similarity": 0.0,
+                    "risk_level": "問題なし",
+                }
+            url_data[m.url]["count"] += 1
+            url_data[m.url]["max_similarity"] = max(url_data[m.url]["max_similarity"], m.similarity)
+            if risk_order.get(m.risk_level, 0) > risk_order.get(url_data[m.url]["risk_level"], 0):
+                url_data[m.url]["risk_level"] = m.risk_level
+
+        return sorted(
+            [UrlMatchSummary(url=url, title=d["title"], match_count=d["count"],
+                             max_similarity=d["max_similarity"], risk_level=d["risk_level"])
+             for url, d in url_data.items()],
+            key=lambda x: x.match_count,
+            reverse=True,
+        )
+
     def _build_reason(
         self,
         score: float,
@@ -108,6 +155,7 @@ class RiskScorer:
         warning_count: int,
         high_risk_count: int,
         match_rate: float,
+        url_summaries: List[UrlMatchSummary] = None,
     ) -> str:
         """最終判定の理由文を生成する。"""
         parts = []
@@ -122,6 +170,10 @@ class RiskScorer:
             parts.append(f"記事全体の類似率 {match_rate:.1f}%（危険ライン{OVERALL_DANGER_RATE}%超）")
         elif match_rate >= OVERALL_WARNING_RATE:
             parts.append(f"記事全体の類似率 {match_rate:.1f}%（要注意ライン{OVERALL_WARNING_RATE}%超）")
+        if url_summaries:
+            top = url_summaries[0]
+            if top.match_count >= 2:
+                parts.append(f"同一URL({top.match_count}フレーズ一致)あり")
 
         if not parts:
             return "類似フレーズが検出されませんでした。"

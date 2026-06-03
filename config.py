@@ -5,7 +5,7 @@ article_similarity_checker 設定ファイル
 
 # ---- テキスト処理 ----
 MIN_TEXT_LENGTH = 40        # チェック対象とする最小文字数（40文字未満は創作性が低い可能性あり）
-MAX_PHRASE_LENGTH = 120     # 分割対象とする最大文字数（超えたら読点で分割）
+MAX_PHRASE_LENGTH = 80      # 分割対象とする最大文字数（超えたら読点で分割）
 
 # ---- 類似度判定しきい値 ----
 HIGH_SIMILARITY_THRESHOLD = 90    # これ以上を「危険」と判定

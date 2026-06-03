@@ -68,7 +68,7 @@ def main():
             step=5,
             help="この値以上の類似度を検出対象にします",
         )
-        use_mock = st.toggle("モック検索を使用", value=True, help="ONのままでAPIキー不要で動作します")
+        use_mock = st.toggle("モック検索を使用", value=False, help="ONにするとAPIキー不要で動作します")
         st.divider()
         st.caption("🔗 モックをオフにするとBrave Search APIで実際のWeb全体と照合できます。")
 

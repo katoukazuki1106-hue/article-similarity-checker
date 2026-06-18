@@ -35,6 +35,8 @@ class SimilarityMatch:
     risk_level: str                  # 問題なし / 高リスク / 要確認 / 危険
     reason: str                      # 判定理由
     editor_comment: str              # 編集者向けコメント
+    media_name: str = ""             # 媒体照合モード：一致した媒体名
+    published_at: str = ""           # 媒体照合モード：一致記事の公開日時
 
 
 class SimilarityChecker:
@@ -80,6 +82,8 @@ class SimilarityChecker:
             risk_level=risk_level,
             reason=reason,
             editor_comment=self._generate_editor_comment(risk_level, best_score, continuous_len),
+            media_name=getattr(best_result, "media_name", ""),
+            published_at=getattr(best_result, "published_at", ""),
         )
 
     def _compute_similarity(self, phrase: str, snippet: str) -> float:

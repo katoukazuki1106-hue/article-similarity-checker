@@ -4,3 +4,11 @@ __pycache__/
 reports/
 .pytest_cache/
 *.zip
+
+# 秘密情報（認証トークン）— 絶対にコミットしない
+youtube_token.json
+*token*.json
+
+# 媒体照合モードのローカル検証用DB（本番はSupabase・4MBで履歴を汚すため除外）
+media_corpus.db
+*.db

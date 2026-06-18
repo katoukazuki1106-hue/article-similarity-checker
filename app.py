@@ -47,7 +47,7 @@ RISK_BG = {
 def main():
     st.title("📋 記事盗作・類似チェック補助ツール")
     st.caption("外部ライターから納品された記事のWeb類似チェックを行い、編集者の確認を支援します。")
-    st.caption("最終更新: 2026-06-04 | v1.4（フレーズ長調整・モックデフォルトOFF）")
+    st.caption("最終更新: 2026-06-18 | v1.5（媒体照合モード追加：指定媒体・過去1か月と照合）")
 
     st.warning(
         "⚠️ 本ツールは盗作・著作権侵害を法的に断定するものではありません。"
@@ -68,9 +68,22 @@ def main():
             step=5,
             help="この値以上の類似度を検出対象にします",
         )
-        use_mock = st.toggle("モック検索を使用", value=False, help="ONにするとAPIキー不要で動作します")
+        media_mode = st.toggle(
+            "📰 媒体照合モード",
+            value=True,
+            help="ONにすると指定媒体・過去1か月のインデックスとローカル照合します（再現性が高い）",
+        )
+        use_mock = st.toggle(
+            "モック検索を使用",
+            value=False,
+            help="ONにするとAPIキー不要で動作します（媒体照合モードOFF時のみ有効）",
+            disabled=media_mode,
+        )
         st.divider()
-        st.caption("🔗 モックをオフにするとBrave Search APIで実際のWeb全体と照合できます。")
+        if media_mode:
+            _show_index_status()
+        else:
+            st.caption("🔗 モックをオフにするとBrave Search APIで実際のWeb全体と照合できます。")
 
     # ---- ファイルアップロード ----
     uploaded_file = st.file_uploader(
@@ -86,10 +99,32 @@ def main():
 
     # ---- チェック実行ボタン ----
     if st.button("🔍 チェック開始", type="primary"):
-        _run_check(uploaded_file, threshold, use_mock)
+        _run_check(uploaded_file, threshold, use_mock, media_mode)
 
 
-def _run_check(uploaded_file, threshold: float, use_mock: bool):
+def _show_index_status():
+    """媒体照合モードのインデックス鮮度を表示する。"""
+    try:
+        from corpus_store import get_store
+        store = get_store()
+        total = store.count()
+        last = store.last_fetched_at()
+    except Exception as e:
+        st.caption(f"📰 インデックス状態の取得に失敗: {e}")
+        return
+
+    last_disp = (last or "")[:16].replace("T", " ") if last else "未取得"
+    st.caption(f"📰 **媒体照合モード**：指定媒体・過去1か月インデックスと照合")
+    st.caption(f"収録記事数: **{total:,}件** ／ 最終クロール: {last_disp}")
+    if total == 0:
+        st.warning(
+            "インデックスがまだ空です。クローラ（crawler.py / GitHub Actions）の初回実行後に"
+            "照合できます。運用開始から約1か月かけて記事が蓄積されます。",
+            icon="⚠️",
+        )
+
+
+def _run_check(uploaded_file, threshold: float, use_mock: bool, media_mode: bool = False):
     """チェック処理を実行し、結果を表示する。"""
 
     with st.spinner("記事を読み込んでいます..."):
@@ -119,7 +154,7 @@ def _run_check(uploaded_file, threshold: float, use_mock: bool):
     with st.spinner("類似フレーズを検索しています..."):
         builder = QueryBuilder()
         queries = builder.build_queries(fragments)
-        search_client = get_search_client(use_mock=use_mock)
+        search_client = get_search_client(use_mock=use_mock, media_mode=media_mode)
         checker = SimilarityChecker()
 
         matches = []
@@ -231,6 +266,9 @@ def _show_matches(matches):
                 st.markdown("**本文フレーズ**")
                 st.info(m.phrase)
                 st.markdown("**類似元**")
+                if getattr(m, "media_name", ""):
+                    pub = (m.published_at or "")[:10]
+                    st.markdown(f"📰 **{m.media_name}**" + (f" ／ 公開日 {pub}" if pub else ""))
                 st.markdown(f"[{m.title}]({m.url})")
                 st.caption(m.matched_snippet[:150] + "…" if len(m.matched_snippet) > 150 else m.matched_snippet)
             st.markdown(f"**判定理由：** {m.reason}")
@@ -253,7 +291,7 @@ def _show_csv_download(matches, filename: str):
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=[
         "判定", "類似度", "連続一致文字数", "本文フレーズ",
-        "類似元タイトル", "類似元URL", "判定理由", "編集者コメント",
+        "媒体名", "公開日", "類似元タイトル", "類似元URL", "判定理由", "編集者コメント",
     ])
     writer.writeheader()
     for m in matches:
@@ -262,6 +300,8 @@ def _show_csv_download(matches, filename: str):
             "類似度": f"{m.similarity:.1f}%",
             "連続一致文字数": m.continuous_match_length,
             "本文フレーズ": m.phrase,
+            "媒体名": getattr(m, "media_name", ""),
+            "公開日": (getattr(m, "published_at", "") or "")[:10],
             "類似元タイトル": m.title,
             "類似元URL": m.url,
             "判定理由": m.reason,

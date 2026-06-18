@@ -22,6 +22,8 @@ class SearchResult:
     title: str
     url: str
     snippet: str
+    media_name: str = ""      # 媒体照合モードで使用（媒体名）
+    published_at: str = ""    # 媒体照合モードで使用（公開日時 ISO8601）
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +285,93 @@ class BraveSearchClient(BaseSearchClient):
 
 
 # ---------------------------------------------------------------------------
+# 媒体照合モード：指定媒体・過去1か月インデックスとローカル照合
+# ---------------------------------------------------------------------------
+
+class MediaIndexSearchClient(BaseSearchClient):
+    """
+    corpus_store に貯めた「指定媒体・過去1か月」の記事コーパスを
+    ローカルで照合する検索クライアント。
+
+    - 生成時にコーパスを1回だけメモリにロードし、文字trigramの転置インデックスを構築。
+    - search(query) はtrigram重なりで候補記事を素早く絞り、上位K件を返す。
+    - 返すSearchResultのsnippetは記事本文（全体）なので、既存のSimilarityChecker
+      （fuzz.partial_ratio）がそのまま最良部分一致を拾える＝Checker無改修。
+    検索ランキング非依存のため、同じ入力には常に同じ結果（再現性が高い）。
+    """
+
+    def __init__(self, store=None, recent_days: Optional[int] = None):
+        from corpus_store import get_store
+        try:
+            from config import (
+                MEDIA_INDEX_RECENT_DAYS,
+                MEDIA_CANDIDATE_TOP_K,
+                MEDIA_TRIGRAM_MIN_OVERLAP,
+            )
+        except Exception:
+            MEDIA_INDEX_RECENT_DAYS, MEDIA_CANDIDATE_TOP_K, MEDIA_TRIGRAM_MIN_OVERLAP = 30, 8, 3
+
+        self.top_k = MEDIA_CANDIDATE_TOP_K
+        self.min_overlap = MEDIA_TRIGRAM_MIN_OVERLAP
+        self.store = store or get_store()
+        self.articles = self.store.iter_recent_articles(
+            recent_days if recent_days is not None else MEDIA_INDEX_RECENT_DAYS
+        )
+        # trigram転置インデックス: trigram -> 記事インデックスのリスト
+        self._inverted: dict = {}
+        for idx, art in enumerate(self.articles):
+            for g in self._trigrams(art.body_text):
+                self._inverted.setdefault(g, []).append(idx)
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        """照合候補絞り込み用の正規化（NFKC・小文字化・記号/空白除去）。"""
+        import unicodedata
+        text = unicodedata.normalize("NFKC", text).lower()
+        # 英数・ひらがな・カタカナ・漢字以外を除去
+        return re.sub(r"[^0-9a-z぀-ヿ一-鿿]", "", text)
+
+    def _trigrams(self, text: str) -> set:
+        norm = self._normalize(text)
+        if len(norm) < 3:
+            return set()
+        return {norm[i:i + 3] for i in range(len(norm) - 2)}
+
+    def search(self, query: str) -> List[SearchResult]:
+        if not self.articles:
+            return []
+
+        qgrams = self._trigrams(query)
+        if not qgrams:
+            return []
+
+        # 転置インデックスで候補記事の重なり数を集計
+        overlap: dict = {}
+        for g in qgrams:
+            for idx in self._inverted.get(g, ()):  # 該当trigramを含む記事
+                overlap[idx] = overlap.get(idx, 0) + 1
+
+        # 重なりが閾値以上の候補を上位K件
+        candidates = sorted(
+            (i for i, c in overlap.items() if c >= self.min_overlap),
+            key=lambda i: overlap[i],
+            reverse=True,
+        )[: self.top_k]
+
+        results: List[SearchResult] = []
+        for idx in candidates:
+            art = self.articles[idx]
+            results.append(SearchResult(
+                title=art.title,
+                url=art.url,
+                snippet=art.body_text,
+                media_name=art.media_name,
+                published_at=art.published_at,
+            ))
+        return results
+
+
+# ---------------------------------------------------------------------------
 # 将来実装：Bing Web Search API
 # ---------------------------------------------------------------------------
 
@@ -326,11 +415,17 @@ class SerpApiClient(BaseSearchClient):
 # クライアントファクトリ
 # ---------------------------------------------------------------------------
 
-def get_search_client(use_mock: bool = True) -> BaseSearchClient:
+def get_search_client(use_mock: bool = True, media_mode: bool = False) -> BaseSearchClient:
     """
-    use_mock=True  → MockSearchClient（デフォルト・APIキー不要）
-    use_mock=False → BraveSearchClient（BRAVE_SEARCH_API_KEY が必要）
+    media_mode=True → MediaIndexSearchClient（指定媒体・過去1か月インデックスと照合）
+    use_mock=True   → MockSearchClient（APIキー不要）
+    use_mock=False  → BraveSearchClient（BRAVE_SEARCH_API_KEY が必要）
+
+    優先度: media_mode > use_mock。
     """
+    if media_mode:
+        return MediaIndexSearchClient()
+
     if use_mock:
         return MockSearchClient()
 

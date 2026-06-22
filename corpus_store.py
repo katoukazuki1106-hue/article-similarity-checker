@@ -191,9 +191,15 @@ class SupabaseStore(BaseCorpusStore):
     def _headers(self, extra: Optional[dict] = None) -> dict:
         h = {
             "apikey": self.key,
-            "Authorization": f"Bearer {self.key}",
             "Content-Type": "application/json",
         }
+        # 旧式キー(JWT・"eyJ"で始まる service_role/anon)は Authorization に載せると
+        # PostgREST が role claim を読んで service_role に解決する。
+        # 一方、新方式の secret キー(sb_secret_...)は JWT ではないため Authorization に
+        # 載せるとユーザトークンとして解釈に失敗し anon に落ちて 403 になる。
+        # secret キーは apikey だけで送れば Supabase 側が service_role に昇格させる。
+        if self.key.startswith("eyJ"):
+            h["Authorization"] = f"Bearer {self.key}"
         if extra:
             h.update(extra)
         return h

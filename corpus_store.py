@@ -248,9 +248,12 @@ class SupabaseStore(BaseCorpusStore):
         import requests
 
         cutoff = _cutoff_iso(days)
+        # 日時の "+00:00" の "+" を素のURLに埋めると空白へ化け 400 になるため、
+        # params 経由で渡して requests に確実にURLエンコードさせる。
         resp = requests.delete(
-            f"{self.endpoint}?published_at=lt.{cutoff}",
+            self.endpoint,
             headers=self._headers({"Prefer": "return=representation"}),
+            params={"published_at": f"lt.{cutoff}"},
             timeout=30,
         )
         resp.raise_for_status()

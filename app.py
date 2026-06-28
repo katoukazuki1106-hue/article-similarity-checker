@@ -47,7 +47,7 @@ RISK_BG = {
 def main():
     st.title("📋 記事盗作・類似チェック補助ツール")
     st.caption("外部ライターから納品された記事のWeb類似チェックを行い、編集者の確認を支援します。")
-    st.caption("最終更新: 2026-06-28 | v1.5.2（媒体照合→Braveフォールバック方式／媒体索引キャッシュで高速化）")
+    st.caption("最終更新: 2026-06-28 | v1.5.3（媒体照合→Braveフォールバック方式／索引キャッシュ高速化／モック検索トグル削除）")
 
     st.warning(
         "⚠️ 本ツールは盗作・著作権侵害を法的に断定するものではありません。"
@@ -81,11 +81,6 @@ def main():
                 "Brave無料枠は月$5（数十記事/月までは実質$0）。OFFにすると媒体DB照合だけ＝完全$0。"
             ),
         )
-        use_mock = st.toggle(
-            "モック検索を使う（テスト用・APIキー不要）",
-            value=False,
-            help="ONにするとフォールバックをBraveの代わりにモック検索で行います（オフライン検証用）。",
-        )
         st.divider()
         _show_index_status()
 
@@ -103,7 +98,7 @@ def main():
 
     # ---- チェック実行ボタン ----
     if st.button("🔍 チェック開始", type="primary"):
-        _run_check(uploaded_file, threshold, brave_fallback, use_mock)
+        _run_check(uploaded_file, threshold, brave_fallback)
 
 
 def _show_index_status():

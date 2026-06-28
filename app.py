@@ -47,7 +47,7 @@ RISK_BG = {
 def main():
     st.title("📋 記事盗作・類似チェック補助ツール")
     st.caption("外部ライターから納品された記事のWeb類似チェックを行い、編集者の確認を支援します。")
-    st.caption("最終更新: 2026-06-22 | v1.5.1（媒体照合モード：Supabase本番化／日時パージのエンコード修正）")
+    st.caption("最終更新: 2026-06-28 | v1.5.2（媒体照合→Braveフォールバック方式／媒体索引キャッシュで高速化）")
 
     st.warning(
         "⚠️ 本ツールは盗作・著作権侵害を法的に断定するものではありません。"
@@ -68,22 +68,26 @@ def main():
             step=5,
             help="この値以上の類似度を検出対象にします",
         )
-        media_mode = st.toggle(
-            "📰 媒体照合モード",
+        st.caption(
+            "🔁 **2段フォールバック方式**：①媒体DB（13媒体・過去1か月／$0・高速）で照合 → "
+            "見つからなければ ②Brave で Web 全体も照合します。片方だけの取りこぼしを防ぎます。"
+        )
+        brave_fallback = st.toggle(
+            "🔍 Brave Web全体もフォールバック照合",
             value=True,
-            help="ONにすると指定媒体・過去1か月のインデックスとローカル照合します（再現性が高い）",
+            help=(
+                "媒体DBで見つからなかった時だけ、Brave検索でWeb全体も追加照合します（取りこぼし防止）。"
+                "媒体DBで検出できた場合はBraveを呼ばないので課金は発生しません。"
+                "Brave無料枠は月$5（数十記事/月までは実質$0）。OFFにすると媒体DB照合だけ＝完全$0。"
+            ),
         )
         use_mock = st.toggle(
-            "モック検索を使用",
+            "モック検索を使う（テスト用・APIキー不要）",
             value=False,
-            help="ONにするとAPIキー不要で動作します（媒体照合モードOFF時のみ有効）",
-            disabled=media_mode,
+            help="ONにするとフォールバックをBraveの代わりにモック検索で行います（オフライン検証用）。",
         )
         st.divider()
-        if media_mode:
-            _show_index_status()
-        else:
-            st.caption("🔗 モックをオフにするとBrave Search APIで実際のWeb全体と照合できます。")
+        _show_index_status()
 
     # ---- ファイルアップロード ----
     uploaded_file = st.file_uploader(
@@ -99,7 +103,7 @@ def main():
 
     # ---- チェック実行ボタン ----
     if st.button("🔍 チェック開始", type="primary"):
-        _run_check(uploaded_file, threshold, use_mock, media_mode)
+        _run_check(uploaded_file, threshold, brave_fallback, use_mock)
 
 
 def _show_index_status():
@@ -124,8 +128,66 @@ def _show_index_status():
         )
 
 
-def _run_check(uploaded_file, threshold: float, use_mock: bool, media_mode: bool = False):
-    """チェック処理を実行し、結果を表示する。"""
+@st.cache_resource(show_spinner=False)
+def _get_media_client(freshness_key: str):
+    """媒体照合クライアント（コーパス＋trigram索引）をキャッシュする。
+
+    freshness_key にクロールの鮮度（収録数＋最終取得時刻）を渡すことで、
+    クロールが更新された時だけ作り直し、それ以外のチェックでは
+    「約480記事の再ダウンロード＋索引再構築」をスキップして高速化する。
+    """
+    return get_search_client(use_mock=False, media_mode=True)
+
+
+def _media_freshness_key() -> str:
+    """媒体DBの鮮度キー（収録数＋最終クロール時刻）。更新されると値が変わる。"""
+    try:
+        from corpus_store import get_store
+        store = get_store()
+        return f"{store.count()}:{store.last_fetched_at()}"
+    except Exception:
+        return "nostore"
+
+
+def _search_pass(client, fragments, queries, threshold: float):
+    """1つの検索クライアントで全フレーズを照合し、(matches, debug_rows) を返す。"""
+    from rapidfuzz import fuzz
+
+    checker = SimilarityChecker()
+    matches = []
+    debug_rows = []
+    progress = st.progress(0, text="照合中...")
+    for i, (fragment, query) in enumerate(zip(fragments, queries)):
+        results = client.search(query)
+        match = checker.check_phrase(fragment.text, results)
+        # デバッグ用：最初の5件の詳細を記録
+        if i < 5:
+            top_url = results[0].url if results else "（結果なし）"
+            top_score = max(
+                (fuzz.partial_ratio(fragment.text, r.snippet) for r in results),
+                default=0
+            ) if results else 0
+            debug_rows.append({
+                "クエリ": query,
+                "取得件数": len(results),
+                "上位URL": top_url,
+                "最高類似度": f"{top_score}%",
+            })
+        if match and match.similarity >= threshold:
+            matches.append(match)
+        progress.progress((i + 1) / len(queries), text=f"照合中... {i+1}/{len(queries)}")
+    progress.empty()
+    return matches, debug_rows
+
+
+def _run_check(uploaded_file, threshold: float, brave_fallback: bool = True, use_mock: bool = False):
+    """チェック処理を実行し、結果を表示する。
+
+    2段フォールバック方式：
+      ① 媒体DB（13媒体・過去1か月／$0・高速）で照合
+      ② 媒体DBで「問題なし」だった時だけ、Brave で Web 全体も追加照合
+    媒体DBでリスクを検出できた場合は Brave を呼ばない（課金回避・結果は確定）。
+    """
 
     with st.spinner("記事を読み込んでいます..."):
         # 一時ファイルに保存して読み込む
@@ -151,36 +213,50 @@ def _run_check(uploaded_file, threshold: float, use_mock: bool, media_mode: bool
         st.warning("チェック対象フレーズが見つかりませんでした。記事が短すぎる可能性があります。")
         return
 
-    with st.spinner("類似フレーズを検索しています..."):
-        builder = QueryBuilder()
-        queries = builder.build_queries(fragments)
-        search_client = get_search_client(use_mock=use_mock, media_mode=media_mode)
-        checker = SimilarityChecker()
+    builder = QueryBuilder()
+    queries = builder.build_queries(fragments)
+    scorer = RiskScorer()
 
-        matches = []
-        debug_rows = []
-        progress = st.progress(0, text="検索中...")
-        for i, (fragment, query) in enumerate(zip(fragments, queries)):
-            results = search_client.search(query)
-            match = checker.check_phrase(fragment.text, results)
-            # デバッグ用：最初の5件の詳細を記録
-            if i < 5:
-                top_url = results[0].url if results else "（結果なし）"
-                from rapidfuzz import fuzz
-                top_score = max(
-                    (fuzz.partial_ratio(fragment.text, r.snippet) for r in results),
-                    default=0
-                ) if results else 0
-                debug_rows.append({
-                    "クエリ": query,
-                    "取得件数": len(results),
-                    "上位URL": top_url,
-                    "最高類似度": f"{top_score}%",
-                })
-            if match and match.similarity >= threshold:
-                matches.append(match)
-            progress.progress((i + 1) / len(queries), text=f"検索中... {i+1}/{len(queries)}")
-        progress.empty()
+    # ---- ① 媒体DB照合（$0・高速）----
+    with st.spinner("① 媒体DB（13媒体・過去1か月）と照合しています..."):
+        media_client = _get_media_client(_media_freshness_key())
+        media_matches, media_debug = _search_pass(media_client, fragments, queries, threshold)
+    media_summary = scorer.calculate(media_matches, len(fragments))
+
+    engines_used = ["📰 媒体DB照合（13媒体・過去1か月）"]
+    matches = media_matches
+    debug_rows = media_debug
+
+    # ---- ② 媒体DBで未検出なら Brave Web全体へフォールバック ----
+    if media_summary.final_risk != "問題なし":
+        st.info(
+            "📰 媒体DB照合でリスクを検出したため、Brave検索はスキップしました"
+            "（コスト節約・判定は確定）。",
+            icon="✅",
+        )
+    elif brave_fallback:
+        fb_client = None
+        try:
+            fb_client = get_search_client(use_mock=use_mock, media_mode=False)
+        except Exception as e:
+            st.warning(
+                f"Brave検索を初期化できなかったためフォールバックをスキップしました: {e}",
+                icon="⚠️",
+            )
+        if fb_client is not None:
+            label = "🧪 モック検索" if use_mock else "🔍 Brave Web全体検索"
+            with st.spinner(f"② 媒体DBで未検出 → {label}でWeb全体も照合しています..."):
+                fb_matches, fb_debug = _search_pass(fb_client, fragments, queries, threshold)
+            engines_used.append(label)
+            matches = media_matches + fb_matches
+            debug_rows = media_debug + fb_debug
+    else:
+        st.caption("ℹ️ Braveフォールバックはオフです（媒体DB照合のみ・完全$0）。")
+
+    risk_summary = scorer.calculate(matches, len(fragments))
+
+    # 実行した照合エンジンを表示
+    st.caption("実行した照合: " + " ＋ ".join(engines_used))
 
     # デバッグ情報を表示
     with st.expander("🔍 デバッグ情報（最初の5クエリ）", expanded=not matches):
@@ -189,9 +265,6 @@ def _run_check(uploaded_file, threshold: float, use_mock: bool, media_mode: bool
             st.dataframe(pd.DataFrame(debug_rows), width="stretch")
         else:
             st.write("データなし")
-
-    scorer = RiskScorer()
-    risk_summary = scorer.calculate(matches, len(fragments))
 
     # ---- 結果表示 ----
     _show_summary(risk_summary, uploaded_file.name, len(article_text), len(queries))
